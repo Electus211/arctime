@@ -3,14 +3,15 @@ name: Arctime Auto Sign
 on:
   schedule:
     - cron: '45 23 * * *'  # 每天UTC 23:45 (北京时间次日7:45)
-  workflow_dispatch:
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   arctime-sign:
     runs-on: ubuntu-latest
     name: Arctime自动签到
     env:
-      TZ: Asia/Shanghai
+      TZ: Asia/Shanghai  # 设置时区为北京时间
+      ENABLE_EMAIL: 'true'  # 启用邮件通知
     
     steps:
     - name: Checkout repository
@@ -22,28 +23,29 @@ jobs:
         python-version: '3.10'
     
     - name: Install dependencies
-      run: pip install requests
+      run: |
+        pip install requests
+        pip install python-dotenv
     
     - name: Run Arctime Auto Sign
       env:
-        # Arctime 账号
-        ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
-        ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
+        # Arctime账号（使用您的Secrets名称）
+        USERNAME: ${{ secrets.USERNAME }}
+        PASSWORD: ${{ secrets.PASSWORD }}
         
-        # 邮件配置
-        ENABLE_EMAIL: 'true'
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER || 'smtp.qq.com' }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT || 465 }}
-        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}  # QQ邮箱授权码
-        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
+        # 邮件配置（使用您的Secrets名称）
+        MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER || 'smtp.qq.com' }}
+        SMTP_PORT: 465  # QQ邮箱固定端口
+        MATL_USERNAME: ${{ secrets.MATL_USERNAME }}  # 发件邮箱
+        MATL_PASSWORD: ${{ secrets.MATL_PASSWORD }}  # QQ邮箱授权码
+        MATL_TO: ${{ secrets.MATL_TO }}  # 收件邮箱
       run: python arctime_auto_sign.py
     
-    - name: Save and upload logs
+    - name: Upload logs
       if: always()
-      uses: actions/upload-artifact@v4  # 更新到v4版本
+      uses: actions/upload-artifact@v4
       with:
-        name: arctime-sign-logs
+        name: arctime-logs
         path: |
           arctime_auto_sign.py
           logs/*
