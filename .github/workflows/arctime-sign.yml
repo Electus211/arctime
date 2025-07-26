@@ -8,7 +8,7 @@ on:
 jobs:
   arctime-sign:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       TZ: Asia/Shanghai
     
@@ -26,17 +26,16 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
         
-    - name: Run Arctime Sign
+    - name: Run with debug
       env:
         ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
         ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
       run: python arctime_auto_sign.py
       
-    - name: Upload logs
+    - name: Upload debug logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: arctime-logs
+        name: debug-logs
         path: |
           arctime_auto_sign.py
-          *.log
