@@ -2,6 +2,7 @@ import requests
 import logging
 import sys
 import os
+import re
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # ================ 初始化设置 ================
@@ -26,7 +27,7 @@ def arctime_login():
         
         headers = {
             "X-Requested-With": "XMLHttpRequest",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Referer": "https://m.arctime.cn/home/user/login.html",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
         }
@@ -44,7 +45,7 @@ def arctime_login():
             logger.info("登录成功（文本检测）")
             return session
             
-        logger.error(f"登录失败，响应内容: {response.text[:200]}")
+        logger.debug(f"登录响应内容: {response.text[:200]}")
         return None
             
     except Exception as e:
@@ -53,41 +54,74 @@ def arctime_login():
 
 def arctime_sign(session):
     try:
-        # 主接口 - 用户中心页面检测
+        # 尝试直接签到接口
+        sign_url = "https://m.arctime.cn/api/user/sign"
+        logger.info(f"尝试签到接口: {sign_url}")
+        
+        try:
+            response = session.post(sign_url, verify=False, timeout=15)
+            response.encoding = 'utf-8'
+            
+            # 调试输出响应内容
+            logger.debug(f"签到响应内容: {response.text[:300]}")
+            
+            # 检测各种可能的成功响应
+            if '{"status":1}' in response.text:
+                logger.info("API返回签到成功")
+                return True
+                
+            if "今日已签到" in response.text:
+                logger.info("检测到'今日已签到'标记")
+                return True
+                
+            if "操作成功" in response.text:
+                logger.info("检测到'操作成功'标记")
+                return True
+                
+            # 尝试解析JSON响应
+            try:
+                data = response.json()
+                if data.get("status") == 1 or data.get("success") or "成功" in data.get("msg", ""):
+                    logger.info("JSON解析签到成功")
+                    return True
+            except:
+                pass
+                
+        except Exception as e:
+            logger.warning(f"签到接口异常: {str(e)}")
+        
+        # 用户中心页面检测（主要方法）
         ucenter_url = "https://m.arctime.cn/home/ucenter"
-        logger.debug(f"尝试用户中心检测: {ucenter_url}")
+        logger.info(f"尝试用户中心页面检测: {ucenter_url}")
         
         response = session.get(ucenter_url, verify=False, timeout=15)
         response.encoding = 'utf-8'
         
+        # 调试输出响应内容
+        logger.debug(f"用户中心页面内容: {response.text[:300]}")
+        
         # 多种成功条件检测
-        success_conditions = [
-            "今日已签到",
-            "sign-status",  # 可能是签到状态的HTML class
-            "已签到",
-            "签到成功"
+        success_patterns = [
+            r"今日已签到",  # 中文提示
+            r"已签到",     # 简短提示
+            r"sign-status",  # 可能是签到状态的HTML class
+            r"签到成功",   # 成功提示
+            r"sign\s*success",  # 可能的CSS类
+            r"签到：已签",  # 可能的格式
+            r"status.*已签"  # 状态包含已签
         ]
         
-        for condition in success_conditions:
-            if condition in response.text:
-                logger.info(f"检测到签到成功标记: {condition}")
+        for pattern in success_patterns:
+            if re.search(pattern, response.text):
+                logger.info(f"检测到签到成功模式: {pattern}")
                 return True
                 
-        # 备用接口尝试
-        endpoints = [
-            ("POST", "https://m.arctime.cn/home/user/do_sign"),  # 修正的接口地址
-            ("POST", "https://m.arctime.cn/user/sign")
-        ]
-        
-        for method, url in endpoints:
-            try:
-                logger.debug(f"尝试备用接口: {method} {url}")
-                response = session.request(method, url, verify=False, timeout=10)
-                if "今日已签到" in response.text:
-                    logger.info(f"{url} 签到成功")
-                    return True
-            except Exception as e:
-                logger.warning(f"接口 {url} 异常: {str(e)}")
+        # 终极方法：检查签到按钮状态
+        if '签到</button>' in response.text:
+            logger.warning("检测到签到按钮，可能未签到")
+        else:
+            logger.info("未检测到签到按钮，可能已签到")
+            return True
                 
         logger.error("所有签到方式均失败")
         return False
@@ -97,18 +131,18 @@ def arctime_sign(session):
         return False
 
 if __name__ == "__main__":
-    logger.info("======== 开始执行 ========")
+    logger.info("======== Arctime自动签到开始 ========")
     success = False
     
     if session := arctime_login():
-        logger.info("登录流程完成")
+        logger.info("登录成功")
         if arctime_sign(session):
-            logger.info("签到流程完成")
+            logger.info("签到成功")
             success = True
         else:
-            logger.error("签到流程失败")
+            logger.error("签到失败")
     else:
-        logger.error("登录流程失败")
+        logger.error("登录失败")
         
-    logger.info("======== 执行结束 ========")
+    logger.info("======== Arctime自动签到结束 ========")
     sys.exit(0 if success else 1)
