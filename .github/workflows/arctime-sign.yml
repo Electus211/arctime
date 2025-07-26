@@ -1,0 +1,33 @@
+name: Arctime Auto Sign
+
+on:
+  schedule:
+    - cron: '45 23 * * *'  # 每天UTC 23:45 (北京时间7:45)
+  workflow_dispatch:
+
+jobs:
+  arctime-sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: Run Sign Script
+      env:
+        ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
+        ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
+      run: |
+        python arctime_auto_sign.py || echo "执行失败"
+        
+    - name: Upload Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: arctime-logs
+        path: arctime_auto_sign.py
