@@ -18,10 +18,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests  # 确保脚本所需库已安装
+        run: pip install requests
 
       - name: Run arctime sign
-        run: python arctime_auto_sign.py  # 关键修改：匹配实际文件名
-        env:
-          USERNAME: ${{ secrets.USERNAME }}
-          PASSWORD: ${{ secrets.PASSWORD }}
+        run: python arctime_auto_sign.py "${{ secrets.USERNAME }}" "${{ secrets.PASSWORD }}"
+        # 通过命令行参数传递Secrets
