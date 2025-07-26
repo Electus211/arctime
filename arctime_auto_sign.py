@@ -24,6 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ================ QQ邮件通知 ================
+# ================ QQ邮件通知 ================
 def send_qq_email(subject, content):
     """发送QQ邮件通知"""
     try:
@@ -31,16 +32,20 @@ def send_qq_email(subject, content):
         smtp_server = os.getenv('SMTP_SERVER', 'smtp.qq.com')
         smtp_port = int(os.getenv('SMTP_PORT', 465))
         sender = os.getenv('EMAIL_SENDER')
-        password = os.getenv('EMAIL_PASSWORD')  # QQ邮箱使用授权码
-        receivers = os.getenv('EMAIL_RECEIVER').split(',')  # 多个收件人用逗号分隔
+        password = os.getenv('EMAIL_PASSWORD')
+        
+        # 处理多个收件人
+        receiver_str = os.getenv('EMAIL_RECEIVER', '')
+        receivers = [r.strip() for r in receiver_str.split(',')] if receiver_str else []
         
         if not sender or not password or not receivers:
             logger.warning("邮件配置不完整，跳过发送")
+            logger.warning(f"发件人: {sender}, 收件人: {receivers}")
             return False
             
         # 创建邮件内容
         message = MIMEText(content, 'plain', 'utf-8')
-        message['From'] = Header(sender, 'utf-8')
+        message['From'] = Header(f"Arctime签到机器人 <{sender}>", 'utf-8')
         message['To'] = Header(",".join(receivers), 'utf-8')
         message['Subject'] = Header(subject, 'utf-8')
         
@@ -48,23 +53,28 @@ def send_qq_email(subject, content):
         max_retries = 3
         for attempt in range(max_retries):
             try:
+                logger.info(f"尝试发送邮件 (第 {attempt+1}/{max_retries} 次)...")
+                
                 if smtp_port == 465:
                     server = smtplib.SMTP_SSL(smtp_server, smtp_port)
                 else:
                     server = smtplib.SMTP(smtp_server, smtp_port)
-                    server.starttls()  # 启用TLS加密
+                    server.starttls()
                 
                 server.login(sender, password)
                 server.sendmail(sender, receivers, message.as_string())
                 server.quit()
-                logger.info("邮件发送成功（尝试 %d/%d）", attempt+1, max_retries)
+                
+                logger.info("邮件发送成功")
                 return True
             except Exception as e:
-                logger.warning("邮件发送失败（尝试 %d/%d）: %s", attempt+1, max_retries, str(e))
+                logger.error(f"邮件发送失败 (尝试 {attempt+1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # 等待2秒后重试
         
         return False
     except Exception as e:
-        logger.error("邮件发送异常: %s", str(e))
+        logger.error(f"邮件发送异常: {str(e)}")
         return False
 
 # ================ Arctime登录 ================
