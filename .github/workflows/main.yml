@@ -1,7 +1,7 @@
 name: Arctime Auto Sign
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 手动触发
   schedule:
     - cron: '30 0 * * *'  # UTC 0:30（北京时间8:30）
 
@@ -18,10 +18,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests  # 确保脚本所需库已安装
 
       - name: Run arctime sign
-        run: python auto_sign.py  # 假设脚本文件名为 auto_sign.py
+        run: python arctime_auto_sign.py  # 关键修改：匹配实际文件名
         env:
           USERNAME: ${{ secrets.USERNAME }}
           PASSWORD: ${{ secrets.PASSWORD }}
