@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 def send_qq_email(subject, content):
     """发送QQ邮件通知"""
     try:
-        # 从环境变量获取邮件配置
-        smtp_server = os.getenv('SMTP_SERVER', 'smtp.qq.com')
+        # 修改后的变量名（与您的Secrets匹配）
+        smtp_server = os.getenv('MATL_SMTP_SERVER', 'smtp.qq.com')  # 原 SMTP_SERVER
         smtp_port = int(os.getenv('SMTP_PORT', 465))
-        sender = os.getenv('EMAIL_SENDER')
-        password = os.getenv('EMAIL_PASSWORD')
-        
+        sender = os.getenv('MATL_USERNAME')  # 原 EMAIL_SENDER
+        password = os.getenv('MATL_PASSWORD')  # 原 EMAIL_PASSWORD
+        receiver_str = os.getenv('MATL_TO', '')  # 原 EMAIL_RECEIVER
         # 处理多个收件人
         receiver_str = os.getenv('EMAIL_RECEIVER', '')
         receivers = [r.strip() for r in receiver_str.split(',')] if receiver_str else []
@@ -82,12 +82,12 @@ def arctime_login():
     session = requests.Session()
     login_url = "https://m.arctime.cn/home/user/login_save.html"
     
-    # 从环境变量获取账号密码
-    username = os.getenv('ARCTIME_USERNAME')
-    password = os.getenv('ARCTIME_PASSWORD')
+    # 修改后的变量名（与您的Secrets匹配）
+    username = os.getenv('USERNAME')  # 原 ARCTIME_USERNAME
+    password = os.getenv('PASSWORD')  # 原 ARCTIME_PASSWORD
     
     if not username or not password:
-        logger.error("未设置ARCTIME_USERNAME或ARCTIME_PASSWORD环境变量")
+        logger.error("未设置USERNAME或PASSWORD环境变量")  # 更新错误提示
         return None
     
     payload = {
@@ -95,7 +95,6 @@ def arctime_login():
         "password": password,
         "login_type": "2"
     }
-    
     headers = {
         "X-Requested-With": "XMLHttpRequest",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
