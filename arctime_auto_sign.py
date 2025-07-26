@@ -52,59 +52,50 @@ def arctime_login():
 
 # ================ 智能签到模块 ================
 def arctime_sign(session):
-    """包含状态检测和自动签到的完整逻辑"""
+    """增强版状态检测+签到"""
     try:
-        # 1. 首先检查签到状态
+        # 第一次检测（带延迟）
         ucenter_url = "https://m.arctime.cn/home/ucenter"
         response = session.get(ucenter_url, verify=False, timeout=15)
         response.encoding = 'utf-8'
         
-        # 已签到检测（多种匹配模式）
-        signed_patterns = [
-            r"今日已签到", 
-            r"已签(到|到成功)",
-            r"sign-status.*?已签",
-            r"签到.*?成功"
+        # 增强版已签到检测
+        signed_keywords = [
+            "今日已签到", "已签", "sign-done", 
+            "已完成", "已打", "checked-in"
         ]
         
-        for pattern in signed_patterns:
-            if re.search(pattern, response.text, re.IGNORECASE):
-                logger.info(f"检测到已签到标记: {pattern}")
-                return True
+        # 检查是否已签
+        if any(keyword in response.text for keyword in signed_keywords):
+            logger.info("✅ 当前已签到（首次检测）")
+            return True
+            
+        # 第二次检测（防止动态加载）
+        logger.info("⚠️ 首次检测未发现签到记录，等待3秒后重试...")
+        time.sleep(3)
+        response = session.get(ucenter_url, verify=False, timeout=15)
         
-        # 2. 如果未签到，执行自动签到
-        logger.info("未检测到签到记录，开始自动签到...")
-        
-        # 尝试所有已知签到接口
+        if any(keyword in response.text for keyword in signed_keywords):
+            logger.info("✅ 当前已签到（二次检测）")
+            return True
+            
+        # 执行自动签到（只有当确实未签时）
+        logger.info("🔄 开始自动签到流程...")
         sign_apis = [
-            ("POST", "https://m.arctime.cn/home/user/do_sign"),  # 主接口
-            ("POST", "https://m.arctime.cn/api/user/sign"),      # 备用接口1
-            ("GET", "https://m.arctime.cn/user/sign")            # 备用接口2
+            ("POST", "https://m.arctime.cn/home/user/do_sign"),
+            ("POST", "https://m.arctime.cn/api/user/sign")
         ]
         
         for method, api in sign_apis:
             try:
-                logger.info(f"尝试 {method} {api}")
                 response = session.request(method, api, verify=False, timeout=10)
-                
-                # 成功检测（支持多种响应格式）
-                if ('"status":1' in response.text or 
-                    "操作成功" in response.text or 
-                    "签到成功" in response.text):
-                    logger.info(f"通过 {api} 签到成功")
+                if '"status":1' in response.text or "成功" in response.text:
+                    logger.info(f"🎉 签到成功（{api}）")
                     return True
-                    
             except Exception as e:
                 logger.warning(f"接口 {api} 异常: {str(e)}")
-        
-        # 3. 最终确认
-        logger.info("最终确认签到状态...")
-        response = session.get(ucenter_url, verify=False, timeout=10)
-        if "今日已签到" in response.text:
-            logger.info("最终确认签到成功")
-            return True
-            
-        logger.error("所有签到方式均失败")
+                
+        logger.error("❌ 所有签到尝试失败")
         return False
         
     except Exception as e:
