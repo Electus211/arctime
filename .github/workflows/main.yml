@@ -2,147 +2,71 @@ name: Arctime Auto Sign
 
 on:
   schedule:
-    - cron: '30 0 * * *'
-  workflow_dispatch:
+    # 每天北京时间7:45运行 (UTC时间23:45)
+    - cron: '45 23 * * *'
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  sign:
+  arctime-sign:
     runs-on: ubuntu-latest
+    name: Arctime自动签到
+    env:
+      TZ: Asia/Shanghai  # 设置时区为北京时间
+    
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies
-        run: |
-          pip install requests pyopenssl
-
-      - name: Run sign script
-        id: sign
-        env:
-          USERNAME: ${{ secrets.USERNAME }}
-          PASSWORD: ${{ secrets.PASSWORD }}
-          MATL_USERNAME: ${{ secrets.MATL_USERNAME }}
-          MATL_PASSWORD: ${{ secrets.MATL_PASSWORD }}
-          MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER }}
-          MATL_TO: ${{ secrets.MATL_TO }}
-        run: |
-          mkdir -p logs
-          LOG_FILE="logs/arctime_$(date +%Y%m%d_%H%M%S).log"
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: pip install requests
+    
+    - name: Run Arctime Auto Sign
+      env:
+        # Arctime 账号
+        ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
+        ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
+        
+        # 邮件配置（QQ邮箱示例）
+        ENABLE_EMAIL: 'true'  # 启用邮件通知
+        SMTP_SERVER: 'smtp.qq.com'
+        SMTP_PORT: 465  # QQ邮箱SSL端口
+        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}  # 发件邮箱
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}  # QQ邮箱授权码
+        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}  # 收件邮箱(多个用逗号分隔)
+      run: python arctime_auto_sign.py
+    
+    - name: Save logs
+      if: always()  # 总是保存日志
+      run: |
+        mkdir -p logs
+        echo "======== Arctime Auto Sign Log ========" > logs/log-$(date +'%Y%m%d').txt
+        python arctime_auto_sign.py >> logs/log-$(date +'%Y%m%d').txt 2>&1
+    
+    - name: Upload logs
+      uses: actions/upload-artifact@v3
+      with:
+        name: arctime-sign-logs
+        path: logs/
+    
+    # 添加失败通知
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const message = `❌ Arctime签到失败！请检查日志：
+          - 仓库: ${{ github.repository }}
+          - 运行ID: ${{ github.run_id }}
+          - 日志: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
           
-          cat << 'EOF' > sign.py
-          import os
-          import re
-          import json
-          import requests
-          import smtplib
-          import logging
-          from email.mime.text import MIMEText
-
-          logging.basicConfig(
-              level=logging.INFO,
-              format='%(asctime)s [%(levelname)s] %(message)s',
-              handlers=[logging.StreamHandler()]
-          )
-          logger = logging.getLogger(__name__)
-
-          def send_email_with_retry(subject, content, max_retries=3):
-              for i in range(max_retries):
-                  try:
-                      msg = MIMEText(content, 'plain', 'utf-8')
-                      msg['Subject'] = f"[Arctime] {subject}"
-                      msg['From'] = os.getenv('MATL_USERNAME')
-                      msg['To'] = os.getenv('MATL_TO')
-                      
-                      with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as s:
-                          s.ehlo()
-                          s.starttls()
-                          s.ehlo()
-                          s.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
-                          s.send_message(msg)
-                      logger.info("✅ 邮件发送成功")
-                      return True
-                  except Exception as e:
-                      logger.warning(f"⚠️ 邮件发送失败(尝试 {i+1}/{max_retries}): {str(e)}")
-              return False
-
-          def get_valid_api():
-              # 尝试多个可能的API端点
-              apis = [
-                  "https://m.arctime.cn/api/sign/new",  # 新接口
-                  "https://api.arctime.cn/v2/sign",     # 备用接口
-                  "https://m.arctime.cn/sign/submit"    # 旧接口
-              ]
-              for api in apis:
-                  try:
-                      test_res = requests.head(api, timeout=5)
-                      if test_res.status_code != 404:
-                          return api
-                  except:
-                      continue
-              return None
-
-          try:
-              logger.info("==== 任务开始 ====")
-              
-              # 1. 登录
-              session = requests.Session()
-              login_res = session.post(
-                  "https://m.arctime.cn/home/user/login_save.html",
-                  data={
-                      'username': os.getenv('USERNAME'),
-                      'password': os.getenv('PASSWORD'),
-                      'login_type': '2'
-                  },
-                  verify=False,
-                  timeout=15
-              )
-              
-              if login_res.status_code != 200:
-                  raise Exception(f"登录请求失败: HTTP {login_res.status_code}")
-                  
-              login_data = json.loads(re.search(r'\{.*\}', login_res.text).group())
-              if login_data.get('status') != 1:
-                  raise Exception(f"登录失败: {login_data.get('msg')}")
-              
-              logger.info("✅ 登录成功")
-              
-              # 2. 查找有效API
-              sign_api = get_valid_api()
-              if not sign_api:
-                  raise Exception("❌ 找不到有效的签到接口")
-                  
-              logger.info(f"🔍 使用接口: {sign_api}")
-              
-              # 3. 执行签到
-              sign_res = session.post(sign_api, verify=False, timeout=15)
-              if sign_res.status_code == 404:
-                  raise Exception("签到接口404错误，请手动确认页面变更")
-                  
-              sign_data = json.loads(re.search(r'\{.*\}', sign_res.text).group())
-              if sign_data.get('status') == 1:
-                  logger.info(f"🎉 签到成功: {sign_data.get('msg')}")
-                  send_email_with_retry("签到成功", f"结果: {sign_data.get('msg')}")
-              else:
-                  raise Exception(f"签到失败: {sign_data.get('msg')}")
-                  
-          except Exception as e:
-              logger.error(f"🚨 系统异常: {str(e)}")
-              send_email_with_retry("执行失败", str(e))
-              exit(1)
-          finally:
-              logger.info("==== 任务结束 ====")
-          EOF
-
-          python sign.py 2>&1 | tee $LOG_FILE
-          echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
-
-      - name: Upload logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: arctime-logs
-          path: ${{ steps.sign.outputs.log_file }}
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: message
+          })
