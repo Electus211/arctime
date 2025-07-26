@@ -1,3 +1,4 @@
+import time  # 用于延迟检测
 import requests
 import logging
 import sys
