@@ -2,8 +2,8 @@ name: Arctime Auto Sign
 
 on:
   schedule:
-    - cron: '30 0 * * *'  # UTC时间每天0:30（北京时间8:30）
-  workflow_dispatch:       # 允许手动触发
+    - cron: '30 0 * * *'  # UTC时间0:30（北京时间8:30）
+  workflow_dispatch:
 
 jobs:
   sign:
@@ -19,18 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install requests smtplib
-
-      - name: Verify Secrets
-        run: |
-          echo "===== Secrets验证 ====="
-          echo "USERNAME: ${#USERNAME} chars"  # 检查长度
-          echo "SMTP Server: $MATL_SMTP_SERVER"
-          echo "Mail From: $MATL_USERNAME"
-          echo "Mail To: $MATL_TO"
-          [ -z "$USERNAME" ] && echo "❌ USERNAME为空" && exit 1
-          [ -z "$MATL_PASSWORD" ] && echo "❌ MATL_PASSWORD为空" && exit 1
+          pip install requests
 
       - name: Run sign script
         env:
@@ -41,15 +30,18 @@ jobs:
           MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER }}
           MATL_TO: ${{ secrets.MATL_TO }}
         run: |
-          # 写入Python脚本
-          cat << 'EOF' > arctime_auto_sign.py
+          # 生成带时间戳的日志文件
+          LOG_FILE="arctime_sign_$(date +%Y%m%d%H%M%S).log"
+          
+          # 执行脚本并记录日志
+          python << 'EOF' | tee $LOG_FILE
           import os
           import requests
           import smtplib
           import logging
           from email.mime.text import MIMEText
-          from datetime import datetime
 
+          # 日志配置
           logging.basicConfig(
               level=logging.INFO,
               format='%(asctime)s [%(levelname)s] %(message)s',
@@ -65,57 +57,68 @@ jobs:
                   msg['To'] = os.getenv('MATL_TO')
                   
                   with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=10) as server:
-                      server.ehlo()
                       server.starttls()
                       server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
                       server.send_message(msg)
                   logger.info("邮件发送成功")
+                  return True
               except Exception as e:
                   logger.error(f"邮件发送失败: {str(e)}")
+                  return False
 
-          def main():
+          # 主逻辑
+          try:
               logger.info("==== 任务开始 ====")
-              try:
-                  # Arctime签到逻辑
-                  session = requests.Session()
-                  login_url = "https://m.arctime.cn/home/user/login_save.html"
-                  payload = {
+              
+              # 登录Arctime
+              session = requests.Session()
+              login_res = session.post(
+                  "https://m.arctime.cn/home/user/login_save.html",
+                  data={
                       "username": os.getenv('USERNAME'),
                       "password": os.getenv('PASSWORD'),
                       "login_type": "2"
-                  }
-                  res = session.post(login_url, data=payload, verify=False, timeout=10)
+                  },
+                  verify=False,
+                  timeout=10
+              )
+              
+              if login_res.json().get("status") == 1:
+                  logger.info("✅ 登录成功")
                   
-                  if res.json().get("status") == 1:
-                      logger.info("登录成功")
-                      # 检查签到状态
-                      ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False)
-                      if "今日已签到" in ucenter_res.text:
-                          send_email("签到提醒", "今日已签到，无需重复操作")
-                      else:
-                          sign_res = session.post("https://m.arctime.cn/api/user/sign", verify=False)
-                          if sign_res.json().get("status") == 1:
-                              send_email("签到成功", "今日签到已完成")
-                          else:
-                              send_email("签到异常", f"服务器返回: {sign_res.text[:200]}")
+                  # 检查签到状态
+                  ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False)
+                  if "今日已签到" in ucenter_res.text:
+                      logger.info("⏭️ 今日已签到")
+                      send_email("签到状态", "今日已签到，无需重复操作")
                   else:
-                      send_email("登录失败", f"错误信息: {res.json().get('msg')}")
-              except Exception as e:
-                  send_email("系统异常", f"执行出错: {str(e)}")
-              finally:
-                  logger.info("==== 任务结束 ====")
+                      sign_res = session.post("https://m.arctime.cn/api/user/sign", verify=False)
+                      if sign_res.json().get("status") == 1:
+                          logger.info("🎉 签到成功")
+                          send_email("签到成功", "今日签到已完成")
+                      else:
+                          logger.error("❌ 签到失败: %s", sign_res.text[:200])
+                          send_email("签到失败", f"服务器返回: {sign_res.text[:200]}")
+              else:
+                  error_msg = login_res.json().get("msg", "未知错误")
+                  logger.error(f"❌ 登录失败: {error_msg}")
+                  send_email("登录失败", f"错误信息: {error_msg}")
 
-          if __name__ == "__main__":
-              main()
+          except Exception as e:
+              logger.error(f"🚨 系统异常: {str(e)}")
+              send_email("系统异常", f"执行出错: {str(e)}")
+          finally:
+              logger.info("==== 任务结束 ====")
           EOF
 
-          # 执行脚本
-          python arctime_auto_sign.py
+          # 上传日志（使用最新版artifact action）
+          if [ -f "$LOG_FILE" ]; then
+              echo "LOG_CONTENT=$(cat $LOG_FILE)" >> $GITHUB_OUTPUT
+          fi
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: sign-logs
-          path: |
-            *.log
+          name: arctime-logs
+          path: ${{ env.LOG_FILE }}
