@@ -2,18 +2,15 @@ name: Arctime Auto Sign
 
 on:
   schedule:
-    - cron: '30 0 * * *'  # UTC时间0:30（北京时间8:30）
+    - cron: '30 0 * * *'
   workflow_dispatch:
-
-env:
-  PYTHONUNBUFFERED: 1  # 确保实时日志输出
 
 jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -45,7 +42,6 @@ jobs:
           import logging
           from email.mime.text import MIMEText
 
-          # 配置日志
           logging.basicConfig(
               level=logging.INFO,
               format='%(asctime)s [%(levelname)s] %(message)s',
@@ -53,29 +49,41 @@ jobs:
           )
           logger = logging.getLogger(__name__)
 
-          def send_email(subject, content):
-              try:
-                  msg = MIMEText(content, 'plain', 'utf-8')
-                  msg['Subject'] = f"[Arctime] {subject}"
-                  msg['From'] = os.getenv('MATL_USERNAME')
-                  msg['To'] = os.getenv('MATL_TO')
-                  
-                  with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as s:
-                      s.ehlo()
-                      s.starttls()
-                      s.ehlo()
-                      s.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
-                      s.send_message(msg)
-                  return True
-              except Exception as e:
-                  logger.error(f"邮件发送失败: {type(e).__name__}: {str(e)}")
-                  return False
+          def send_email_with_retry(subject, content, max_retries=3):
+              for i in range(max_retries):
+                  try:
+                      msg = MIMEText(content, 'plain', 'utf-8')
+                      msg['Subject'] = f"[Arctime] {subject}"
+                      msg['From'] = os.getenv('MATL_USERNAME')
+                      msg['To'] = os.getenv('MATL_TO')
+                      
+                      with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as s:
+                          s.ehlo()
+                          s.starttls()
+                          s.ehlo()
+                          s.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
+                          s.send_message(msg)
+                      logger.info("✅ 邮件发送成功")
+                      return True
+                  except Exception as e:
+                      logger.warning(f"⚠️ 邮件发送失败(尝试 {i+1}/{max_retries}): {str(e)}")
+              return False
 
-          def parse_response(text):
-              try:
-                  return json.loads(re.search(r'\{.*\}', text).group())
-              except:
-                  return {'status': 0, 'msg': 'Invalid JSON: ' + text[:100]}
+          def get_valid_api():
+              # 尝试多个可能的API端点
+              apis = [
+                  "https://m.arctime.cn/api/sign/new",  # 新接口
+                  "https://api.arctime.cn/v2/sign",     # 备用接口
+                  "https://m.arctime.cn/sign/submit"    # 旧接口
+              ]
+              for api in apis:
+                  try:
+                      test_res = requests.head(api, timeout=5)
+                      if test_res.status_code != 404:
+                          return api
+                  except:
+                      continue
+              return None
 
           try:
               logger.info("==== 任务开始 ====")
@@ -92,49 +100,49 @@ jobs:
                   verify=False,
                   timeout=15
               )
-              login_data = parse_response(login_res.text)
               
+              if login_res.status_code != 200:
+                  raise Exception(f"登录请求失败: HTTP {login_res.status_code}")
+                  
+              login_data = json.loads(re.search(r'\{.*\}', login_res.text).group())
               if login_data.get('status') != 1:
                   raise Exception(f"登录失败: {login_data.get('msg')}")
               
               logger.info("✅ 登录成功")
               
-              # 2. 检查签到状态
-              ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False, timeout=15)
-              if "今日已签到" in ucenter_res.text:
-                  logger.info("⏭️ 今日已签到")
-                  send_email("签到状态", "今日已签到，无需重复操作")
-                  exit(0)
+              # 2. 查找有效API
+              sign_api = get_valid_api()
+              if not sign_api:
+                  raise Exception("❌ 找不到有效的签到接口")
+                  
+              logger.info(f"🔍 使用接口: {sign_api}")
               
               # 3. 执行签到
-              sign_res = session.post(
-                  "https://m.arctime.cn/api/user/sign",
-                  verify=False,
-                  timeout=15
-              )
-              sign_data = parse_response(sign_res.text)
-              
+              sign_res = session.post(sign_api, verify=False, timeout=15)
+              if sign_res.status_code == 404:
+                  raise Exception("签到接口404错误，请手动确认页面变更")
+                  
+              sign_data = json.loads(re.search(r'\{.*\}', sign_res.text).group())
               if sign_data.get('status') == 1:
                   logger.info(f"🎉 签到成功: {sign_data.get('msg')}")
-                  send_email("签到成功", f"结果: {sign_data.get('msg')}")
+                  send_email_with_retry("签到成功", f"结果: {sign_data.get('msg')}")
               else:
                   raise Exception(f"签到失败: {sign_data.get('msg')}")
                   
           except Exception as e:
               logger.error(f"🚨 系统异常: {str(e)}")
-              send_email("执行失败", str(e))
+              send_email_with_retry("执行失败", str(e))
               exit(1)
           finally:
               logger.info("==== 任务结束 ====")
           EOF
 
-          # 执行脚本
           python sign.py 2>&1 | tee $LOG_FILE
           echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload logs
-        if: always()
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: arctime-logs
           path: ${{ steps.sign.outputs.log_file }}
