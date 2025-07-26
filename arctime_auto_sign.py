@@ -6,6 +6,7 @@ import sys
 import io
 import os
 import smtplib
+import time
 from email.mime.text import MIMEText
 from email.header import Header
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -23,241 +24,103 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ================ QQ邮件通知 ================
-# ================ QQ邮件通知 ================
 def send_qq_email(subject, content):
-    """发送QQ邮件通知"""
+    """发送QQ邮件通知（使用MATL_前缀变量）"""
     try:
-        # 修改后的变量名（与您的Secrets匹配）
-        smtp_server = os.getenv('MATL_SMTP_SERVER', 'smtp.qq.com')  # 原 SMTP_SERVER
+        smtp_server = os.getenv('MATL_SMTP_SERVER', 'smtp.qq.com')
         smtp_port = int(os.getenv('SMTP_PORT', 465))
-        sender = os.getenv('MATL_USERNAME')  # 原 EMAIL_SENDER
-        password = os.getenv('MATL_PASSWORD')  # 原 EMAIL_PASSWORD
-        receiver_str = os.getenv('MATL_TO', '')  # 原 EMAIL_RECEIVER
-        # 处理多个收件人
-        receiver_str = os.getenv('EMAIL_RECEIVER', '')
-        receivers = [r.strip() for r in receiver_str.split(',')] if receiver_str else []
+        sender = os.getenv('MATL_USERNAME')
+        password = os.getenv('MATL_PASSWORD')
+        receivers = [r.strip() for r in os.getenv('MATL_TO', '').split(',') if r.strip()]
         
-        if not sender or not password or not receivers:
+        if not all([sender, password, receivers]):
             logger.warning("邮件配置不完整，跳过发送")
-            logger.warning(f"发件人: {sender}, 收件人: {receivers}")
             return False
             
-        # 创建邮件内容
-        message = MIMEText(content, 'plain', 'utf-8')
-        message['From'] = Header(f"Arctime签到机器人 <{sender}>", 'utf-8')
-        message['To'] = Header(",".join(receivers), 'utf-8')
-        message['Subject'] = Header(subject, 'utf-8')
+        msg = MIMEText(content, 'plain', 'utf-8')
+        msg['From'] = Header(f"Arctime签到通知 <{sender}>")
+        msg['To'] = Header(",".join(receivers))
+        msg['Subject'] = Header(subject)
         
-        # 发送邮件（带重试机制）
-        max_retries = 3
-        for attempt in range(max_retries):
+        for attempt in range(3):
             try:
-                logger.info(f"尝试发送邮件 (第 {attempt+1}/{max_retries} 次)...")
-                
-                if smtp_port == 465:
-                    server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-                else:
-                    server = smtplib.SMTP(smtp_server, smtp_port)
-                    server.starttls()
-                
-                server.login(sender, password)
-                server.sendmail(sender, receivers, message.as_string())
-                server.quit()
-                
+                with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+                    server.login(sender, password)
+                    server.sendmail(sender, receivers, msg.as_string())
                 logger.info("邮件发送成功")
                 return True
             except Exception as e:
-                logger.error(f"邮件发送失败 (尝试 {attempt+1}/{max_retries}): {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)  # 等待2秒后重试
-        
+                logger.warning(f"邮件发送失败（尝试 {attempt+1}/3）: {str(e)}")
+                time.sleep(2)
         return False
     except Exception as e:
         logger.error(f"邮件发送异常: {str(e)}")
         return False
 
-# ================ Arctime登录 ================
 def arctime_login():
-    session = requests.Session()
-    login_url = "https://m.arctime.cn/home/user/login_save.html"
-    
-    # 修改后的变量名（与您的Secrets匹配）
-    username = os.getenv('USERNAME')  # 原 ARCTIME_USERNAME
-    password = os.getenv('PASSWORD')  # 原 ARCTIME_PASSWORD
+    """使用USERNAME/PASSWORD环境变量登录"""
+    username = os.getenv('USERNAME')
+    password = os.getenv('PASSWORD')
     
     if not username or not password:
-        logger.error("未设置USERNAME或PASSWORD环境变量")  # 更新错误提示
+        logger.error("请设置USERNAME和PASSWORD环境变量")
         return None
     
-    payload = {
-        "username": username,
-        "password": password,
-        "login_type": "2"
-    }
-    headers = {
-        "X-Requested-With": "XMLHttpRequest",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Origin": "https://m.arctime.cn",
-        "Referer": "https://m.arctime.cn/home/user/login.html",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-    }
-    
+    session = requests.Session()
     try:
-        logger.info("正在登录Arctime...")
-        response = session.post(login_url, data=payload, headers=headers, verify=False)
-        response.encoding = 'utf-8'
-        
-        try:
-            data = response.json()
-            if data.get("status") == 1:
-                logger.info("登录成功")
-                return session
-            logger.error("登录失败: %s", data.get("msg", "未知错误"))
-        except json.JSONDecodeError:
-            logger.error("登录响应非JSON格式: %s", response.text[:100])
+        response = session.post(
+            "https://m.arctime.cn/home/user/login_save.html",
+            data={"username": username, "password": password, "login_type": "2"},
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "X-Requested-With": "XMLHttpRequest"
+            },
+            verify=False
+        )
+        if response.json().get("status") == 1:
+            logger.info("登录成功")
+            return session
+        logger.error("登录失败")
     except Exception as e:
-        logger.error("登录异常: %s", str(e))
+        logger.error(f"登录异常: {str(e)}")
     return None
 
-# ================ Arctime签到 ================
 def arctime_sign(session):
-    if session is None:
-        logger.error("无法签到：未登录或会话无效")
-        return False
-        
-    try:
-        # 扩展可能的签到接口
-        sign_urls = [
-            ("POST", "https://m.arctime.cn/api/user/sign", 5),
-            ("POST", "https://api.arctime.cn/v1/user/sign", 5),
-            ("GET", "https://m.arctime.cn/home/user/do_sign", 5),
-            ("POST", "https://m.arctime.cn/user/sign_in", 5)
-        ]
-        
-        # 更新会话头信息
-        session.headers.update({
-            "Referer": "https://m.arctime.cn/home/ucenter",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "X-Requested-With": "XMLHttpRequest"
-        })
-        
-        sign_success = False
-        sign_message = ""
-        
-        for method, url, timeout in sign_urls:
-            try:
-                logger.info("尝试签到接口: %s %s", method, url)
-                
-                if method == "POST":
-                    response = session.post(url, verify=False, timeout=timeout)
-                else:
-                    response = session.get(url, verify=False, timeout=timeout)
-                
-                response.encoding = 'utf-8'
-                
-                # 检查响应内容
-                if "今日已签到" in response.text:
-                    sign_message = f"今日已签到（接口: {url}）"
-                    logger.info(sign_message)
-                    sign_success = True
-                    break
-                    
-                if "status" in response.text:
-                    try:
-                        data = response.json()
-                        if data.get("status") == 1 or "成功" in data.get("msg", ""):
-                            sign_message = f"签到成功（接口: {url}）"
-                            logger.info(sign_message)
-                            sign_success = True
-                            break
-                    except:
-                        pass  # 非JSON格式继续检查文本
-                
-                if "操作成功" in response.text:
-                    sign_message = f"签到成功（接口: {url}）"
-                    logger.info(sign_message)
-                    sign_success = True
-                    break
-                    
-            except requests.exceptions.RequestException as e:
-                logger.warning("接口 %s 请求异常: %s", url, str(e))
+    """签到主逻辑"""
+    sign_urls = [
+        ("POST", "https://m.arctime.cn/api/user/sign"),
+        ("POST", "https://api.arctime.cn/v1/user/sign"),
+        ("GET", "https://m.arctime.cn/home/user/do_sign")
+    ]
+    
+    for method, url in sign_urls:
+        try:
+            response = session.request(method, url, verify=False, timeout=10)
+            if "今日已签到" in response.text or response.json().get("status") == 1:
+                logger.info(f"签到成功（{url}）")
+                return True, f"{method} {url} 成功"
+        except Exception as e:
+            logger.warning(f"接口 {url} 异常: {str(e)}")
+    
+    logger.error("所有签到接口尝试失败")
+    return False, "签到失败"
 
-        # 如果所有接口都失败，检查用户中心页面
-        if not sign_success:
-            logger.info("尝试通过用户中心页面确认签到状态...")
-            try:
-                response = session.get("https://m.arctime.cn/home/ucenter", verify=False, timeout=10)
-                response.encoding = 'utf-8'
-                
-                # 检查签到状态
-                if "今日已签到" in response.text:
-                    sign_message = "页面检测: 今日已签到"
-                    logger.info(sign_message)
-                    sign_success = True
-                    
-                elif "操作成功" in response.text:
-                    sign_message = "页面检测: 签到成功"
-                    logger.info(sign_message)
-                    sign_success = True
-                    
-                else:
-                    # 尝试提取签到状态
-                    sign_status = re.search(r'class="sign-status">(.+?)<', response.text)
-                    if sign_status:
-                        status_text = sign_status.group(1)
-                        if "已签到" in status_text or "成功" in status_text:
-                            sign_message = f"页面检测: {status_text}"
-                            logger.info(sign_message)
-                            sign_success = True
-                    
-            except requests.exceptions.RequestException as e:
-                logger.error("用户中心请求失败: %s", str(e))
-        
-        return sign_success, sign_message
-
-    except Exception as e:
-        logger.error("签到流程异常: %s", str(e))
-        return False, f"签到异常: {str(e)}"
-
-# ================ 主程序 ================
 if __name__ == "__main__":
-    logger.info("======== Arctime自动签到开始 ========")
-    sign_result = False
-    sign_message = "未执行签到"
+    logger.info("======== 任务开始 ========")
     
-    # 执行登录和签到
+    # 执行签到
     session = arctime_login()
-    if session:
-        sign_result, sign_message = arctime_sign(session)
+    status, message = (False, "登录失败") if not session else arctime_sign(session)
     
-    # 准备邮件内容
-    status = "成功" if sign_result else "失败"
-    subject = f"Arctime签到通知 - {status}"
-    content = f"""
-    Arctime自动签到结果：
-    - 时间: {os.popen('date').read().strip()}
-    - 状态: {status}
-    - 详情: {sign_message}
-    
-    GitHub Actions运行日志：
-    - 仓库: {os.getenv('GITHUB_REPOSITORY', '未知仓库')}
-    - 运行ID: {os.getenv('GITHUB_RUN_ID', '未知')}
-    - 日志链接: {os.getenv('GITHUB_SERVER_URL', '')}/{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID', '')}
-    """
-    
-    # 发送邮件通知
+    # 发送通知
     if os.getenv('ENABLE_EMAIL') == 'true':
-        logger.info("正在发送邮件通知...")
-        email_sent = send_qq_email(subject, content)
-        logger.info("邮件发送状态: %s", "成功" if email_sent else "失败")
-    else:
-        logger.info("未启用邮件通知")
+        email_content = f"""
+        Arctime签到结果：
+        时间: {time.strftime('%Y-%m-%d %H:%M:%S')}
+        状态: {"成功" if status else "失败"}
+        详情: {message}
+        """
+        send_qq_email(f"Arctime签到{'成功' if status else '失败'}", email_content)
     
-    logger.info("======== Arctime自动签到结束 ========")
-    
-    # 如果签到失败，退出码为1（触发工作流失败通知）
-    if not sign_result:
-        sys.exit(1)
+    logger.info("======== 任务结束 ========")
+    sys.exit(0 if status else 1)
