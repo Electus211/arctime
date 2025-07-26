@@ -1,19 +1,27 @@
-name: CI
+name: Arctime Auto Sign
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:  # 允许手动触发
+  schedule:
+    - cron: '30 0 * * *'  # UTC 0:30（北京时间8:30）
 
 jobs:
-  build:  # 修正为 "build"（非 "builds"）
+  sign:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      # 添加你的实际任务步骤（示例：打印 Hello World）
-      - name: Run a script
-        run: echo "Hello, GitHub Actions!"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run arctime sign
+        run: python auto_sign.py  # 假设脚本文件名为 auto_sign.py
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
