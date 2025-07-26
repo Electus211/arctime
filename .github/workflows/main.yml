@@ -18,10 +18,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install requests
+        run: pip install requests
 
       - name: Run sign script
+        id: sign
         env:
           USERNAME: ${{ secrets.USERNAME }}
           PASSWORD: ${{ secrets.PASSWORD }}
@@ -30,8 +30,9 @@ jobs:
           MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER }}
           MATL_TO: ${{ secrets.MATL_TO }}
         run: |
-          # 生成带时间戳的日志文件
-          LOG_FILE="arctime_sign_$(date +%Y%m%d%H%M%S).log"
+          # 创建日志目录
+          mkdir -p logs
+          LOG_FILE="logs/arctime_$(date +%Y%m%d_%H%M%S).log"
           
           # 执行脚本并记录日志
           python << 'EOF' | tee $LOG_FILE
@@ -41,7 +42,6 @@ jobs:
           import logging
           from email.mime.text import MIMEText
 
-          # 日志配置
           logging.basicConfig(
               level=logging.INFO,
               format='%(asctime)s [%(levelname)s] %(message)s',
@@ -60,17 +60,16 @@ jobs:
                       server.starttls()
                       server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
                       server.send_message(msg)
-                  logger.info("邮件发送成功")
+                  logger.info("✅ 邮件发送成功")
                   return True
               except Exception as e:
-                  logger.error(f"邮件发送失败: {str(e)}")
+                  logger.error(f"❌ 邮件发送失败: {str(e)}")
                   return False
 
-          # 主逻辑
           try:
               logger.info("==== 任务开始 ====")
               
-              # 登录Arctime
+              # Arctime签到逻辑
               session = requests.Session()
               login_res = session.post(
                   "https://m.arctime.cn/home/user/login_save.html",
@@ -97,8 +96,9 @@ jobs:
                           logger.info("🎉 签到成功")
                           send_email("签到成功", "今日签到已完成")
                       else:
-                          logger.error("❌ 签到失败: %s", sign_res.text[:200])
-                          send_email("签到失败", f"服务器返回: {sign_res.text[:200]}")
+                          error_msg = sign_res.text[:200] if sign_res.text else "空响应"
+                          logger.error(f"❌ 签到失败: {error_msg}")
+                          send_email("签到失败", f"服务器返回: {error_msg}")
               else:
                   error_msg = login_res.json().get("msg", "未知错误")
                   logger.error(f"❌ 登录失败: {error_msg}")
@@ -111,14 +111,12 @@ jobs:
               logger.info("==== 任务结束 ====")
           EOF
 
-          # 上传日志（使用最新版artifact action）
-          if [ -f "$LOG_FILE" ]; then
-              echo "LOG_CONTENT=$(cat $LOG_FILE)" >> $GITHUB_OUTPUT
-          fi
+          # 设置日志文件路径输出
+          echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: arctime-logs
-          path: ${{ env.LOG_FILE }}
+          path: ${{ steps.sign.outputs.log_file }}
