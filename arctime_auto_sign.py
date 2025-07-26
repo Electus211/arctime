@@ -14,20 +14,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def send_email(subject, content):
-    """发送邮件通知"""
+    """修复版邮件发送函数"""
     try:
+        # 配置邮件内容
         msg = MIMEText(content, 'plain', 'utf-8')
         msg['Subject'] = subject
         msg['From'] = os.getenv('MATL_USERNAME')
         msg['To'] = os.getenv('MATL_TO')
         
-        with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587) as server:
-            server.starttls()
-            server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
-            server.send_message(msg)
-        logger.info("邮件发送成功")
+        # 分步调试SMTP连接
+        logger.info("正在连接SMTP服务器...")
+        server = smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=10)
+        
+        logger.info("启动TLS加密...")
+        server.starttls()
+        
+        logger.info("尝试登录...")
+        server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
+        
+        logger.info("发送邮件...")
+        server.send_message(msg)
+        server.quit()
+        logger.info("✅ 邮件发送成功")
     except Exception as e:
-        logger.error(f"邮件发送失败: {str(e)}")
+        logger.error(f"❌ 邮件发送失败: {str(e)}")
+        # 打印调试信息
+        logger.debug(f"SMTP Server: {os.getenv('MATL_SMTP_SERVER')}")
+        logger.debug(f"Username: {os.getenv('MATL_USERNAME')}")
 
 def arctime_sign():
     """Arctime签到主逻辑"""
