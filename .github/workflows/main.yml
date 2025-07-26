@@ -2,16 +2,15 @@ name: Arctime Auto Sign
 
 on:
   schedule:
-    # 每天北京时间7:45运行 (UTC时间23:45)
-    - cron: '45 23 * * *'
-  workflow_dispatch:  # 允许手动触发
+    - cron: '45 23 * * *'  # 每天UTC 23:45 (北京时间次日7:45)
+  workflow_dispatch:
 
 jobs:
   arctime-sign:
     runs-on: ubuntu-latest
     name: Arctime自动签到
     env:
-      TZ: Asia/Shanghai  # 设置时区为北京时间
+      TZ: Asia/Shanghai
     
     steps:
     - name: Checkout repository
@@ -31,42 +30,20 @@ jobs:
         ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
         ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
         
-        # 邮件配置（QQ邮箱示例）
-        ENABLE_EMAIL: 'true'  # 启用邮件通知
-        SMTP_SERVER: 'smtp.qq.com'
-        SMTP_PORT: 465  # QQ邮箱SSL端口
-        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}  # 发件邮箱
+        # 邮件配置
+        ENABLE_EMAIL: 'true'
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER || 'smtp.qq.com' }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT || 465 }}
+        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}  # QQ邮箱授权码
-        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}  # 收件邮箱(多个用逗号分隔)
+        EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
       run: python arctime_auto_sign.py
     
-    - name: Save logs
-      if: always()  # 总是保存日志
-      run: |
-        mkdir -p logs
-        echo "======== Arctime Auto Sign Log ========" > logs/log-$(date +'%Y%m%d').txt
-        python arctime_auto_sign.py >> logs/log-$(date +'%Y%m%d').txt 2>&1
-    
-    - name: Upload logs
-      uses: actions/upload-artifact@v3
+    - name: Save and upload logs
+      if: always()
+      uses: actions/upload-artifact@v4  # 更新到v4版本
       with:
         name: arctime-sign-logs
-        path: logs/
-    
-    # 添加失败通知
-    - name: Notify on failure
-      if: failure()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const message = `❌ Arctime签到失败！请检查日志：
-          - 仓库: ${{ github.repository }}
-          - 运行ID: ${{ github.run_id }}
-          - 日志: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: message
-          })
+        path: |
+          arctime_auto_sign.py
+          logs/*
