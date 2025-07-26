@@ -11,7 +11,6 @@ jobs:
     name: Arctime自动签到
     env:
       TZ: Asia/Shanghai  # 设置时区为北京时间
-      ENABLE_EMAIL: 'true'  # 启用邮件通知
     
     steps:
     - name: Checkout repository
@@ -23,22 +22,16 @@ jobs:
         python-version: '3.10'
     
     - name: Install dependencies
-      run: |
-        pip install requests
-        pip install python-dotenv
+      run: pip install requests
     
     - name: Run Arctime Auto Sign
       env:
-        # Arctime账号（使用您的Secrets名称）
-        USERNAME: ${{ secrets.USERNAME }}
-        PASSWORD: ${{ secrets.PASSWORD }}
+        # Arctime账号密码
+        ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
+        ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
         
-        # 邮件配置（使用您的Secrets名称）
-        MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER || 'smtp.qq.com' }}
-        SMTP_PORT: 465  # QQ邮箱固定端口
-        MATL_USERNAME: ${{ secrets.MATL_USERNAME }}  # 发件邮箱
-        MATL_PASSWORD: ${{ secrets.MATL_PASSWORD }}  # QQ邮箱授权码
-        MATL_TO: ${{ secrets.MATL_TO }}  # 收件邮箱
+        # 可选调试模式（需要时启用）
+        # DEBUG: 'true'
       run: python arctime_auto_sign.py
     
     - name: Upload logs
@@ -46,6 +39,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: arctime-logs
-        path: |
-          arctime_auto_sign.py
-          logs/*
+        path: arctime_auto_sign.py
