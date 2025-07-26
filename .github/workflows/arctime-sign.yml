@@ -26,7 +26,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
         
-    - name: Run with debug
+    - name: Run Arctime Sign
       env:
         ARCTIME_USERNAME: ${{ secrets.ARCTIME_USERNAME }}
         ARCTIME_PASSWORD: ${{ secrets.ARCTIME_PASSWORD }}
@@ -36,6 +36,5 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: debug-logs
-        path: |
-          arctime_auto_sign.py
+        name: arctime-logs
+        path: arctime_auto_sign.py
