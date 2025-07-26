@@ -18,7 +18,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests pyopenssl
 
       - name: Run sign script
         id: sign
@@ -30,18 +31,22 @@ jobs:
           MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER }}
           MATL_TO: ${{ secrets.MATL_TO }}
         run: |
-          # 创建日志目录
           mkdir -p logs
           LOG_FILE="logs/arctime_$(date +%Y%m%d_%H%M%S).log"
           
-          # 执行脚本并记录日志
           python << 'EOF' | tee $LOG_FILE
           import os
           import requests
           import smtplib
+          import json
           import logging
           from email.mime.text import MIMEText
 
+          # 禁用SSL警告
+          import urllib3
+          urllib3.disable_warnings()
+
+          # 日志配置
           logging.basicConfig(
               level=logging.INFO,
               format='%(asctime)s [%(levelname)s] %(message)s',
@@ -56,20 +61,29 @@ jobs:
                   msg['From'] = os.getenv('MATL_USERNAME')
                   msg['To'] = os.getenv('MATL_TO')
                   
-                  with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=10) as server:
+                  # 强制SMTP协议兼容
+                  with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as server:
+                      server.ehlo()
                       server.starttls()
+                      server.ehlo()
                       server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
                       server.send_message(msg)
                   logger.info("✅ 邮件发送成功")
                   return True
               except Exception as e:
-                  logger.error(f"❌ 邮件发送失败: {str(e)}")
+                  logger.error(f"❌ 邮件发送失败: {type(e).__name__}: {str(e)}")
                   return False
+
+          def safe_json_parse(text):
+              try:
+                  return json.loads(re.search(r'\{.*\}', text).group())
+              except:
+                  return {"status": 0, "msg": "Invalid JSON"}
 
           try:
               logger.info("==== 任务开始 ====")
               
-              # Arctime签到逻辑
+              # Arctime登录
               session = requests.Session()
               login_res = session.post(
                   "https://m.arctime.cn/home/user/login_save.html",
@@ -79,39 +93,44 @@ jobs:
                       "login_type": "2"
                   },
                   verify=False,
-                  timeout=10
+                  timeout=15
               )
+              login_data = safe_json_parse(login_res.text)
               
-              if login_res.json().get("status") == 1:
+              if login_data.get("status") == 1:
                   logger.info("✅ 登录成功")
                   
-                  # 检查签到状态
-                  ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False)
+                  # 签到检查
+                  ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False, timeout=15)
                   if "今日已签到" in ucenter_res.text:
                       logger.info("⏭️ 今日已签到")
                       send_email("签到状态", "今日已签到，无需重复操作")
                   else:
-                      sign_res = session.post("https://m.arctime.cn/api/user/sign", verify=False)
-                      if sign_res.json().get("status") == 1:
+                      sign_res = session.post(
+                          "https://m.arctime.cn/api/user/sign",
+                          verify=False,
+                          timeout=15
+                      )
+                      sign_data = safe_json_parse(sign_res.text)
+                      if sign_data.get("status") == 1:
                           logger.info("🎉 签到成功")
-                          send_email("签到成功", "今日签到已完成")
+                          send_email("签到成功", f"积分变动: {sign_data.get('msg')}")
                       else:
-                          error_msg = sign_res.text[:200] if sign_res.text else "空响应"
+                          error_msg = sign_data.get("msg", sign_res.text[:200])
                           logger.error(f"❌ 签到失败: {error_msg}")
-                          send_email("签到失败", f"服务器返回: {error_msg}")
+                          send_email("签到失败", f"错误信息: {error_msg}")
               else:
-                  error_msg = login_res.json().get("msg", "未知错误")
+                  error_msg = login_data.get("msg", "未知错误")
                   logger.error(f"❌ 登录失败: {error_msg}")
                   send_email("登录失败", f"错误信息: {error_msg}")
 
           except Exception as e:
-              logger.error(f"🚨 系统异常: {str(e)}")
-              send_email("系统异常", f"执行出错: {str(e)}")
+              logger.error(f"🚨 系统异常: {type(e).__name__}: {str(e)}")
+              send_email("系统崩溃", f"严重错误: {type(e).__name__}: {str(e)}")
           finally:
               logger.info("==== 任务结束 ====")
           EOF
 
-          # 设置日志文件路径输出
           echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload logs
