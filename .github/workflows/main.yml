@@ -1,25 +1,30 @@
 name: Arctime Auto Sign
 
 on:
-  workflow_dispatch:  # 手动触发
   schedule:
-    - cron: '30 0 * * *'  # UTC 0:30（北京时间8:30）
+    - cron: '30 0 * * *'  # UTC时间0:30（北京时间8:30）
+  workflow_dispatch:
 
 jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+          
       - name: Install dependencies
         run: pip install requests
-
-      - name: Run arctime sign
-        run: python arctime_auto_sign.py "${{ secrets.USERNAME }}" "${{ secrets.PASSWORD }}"
-        # 通过命令行参数传递Secrets
+        
+      - name: Run sign script
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          MATL_USERNAME: ${{ secrets.MATL_USERNAME }}
+          MATL_PASSWORD: ${{ secrets.MATL_PASSWORD }}
+          MATL_SMTP_SERVER: ${{ secrets.MATL_SMTP_SERVER }}
+          MATL_TO: ${{ secrets.MATL_TO }}
+        run: python arctime_auto_sign.py
