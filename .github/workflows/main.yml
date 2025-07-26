@@ -5,17 +5,19 @@ on:
     - cron: '30 0 * * *'  # UTC时间0:30（北京时间8:30）
   workflow_dispatch:
 
+env:
+  PYTHONUNBUFFERED: 1  # 确保实时日志输出
+
 jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
@@ -34,19 +36,16 @@ jobs:
           mkdir -p logs
           LOG_FILE="logs/arctime_$(date +%Y%m%d_%H%M%S).log"
           
-          python << 'EOF' | tee $LOG_FILE
+          cat << 'EOF' > sign.py
           import os
+          import re
+          import json
           import requests
           import smtplib
-          import json
           import logging
           from email.mime.text import MIMEText
 
-          # 禁用SSL警告
-          import urllib3
-          urllib3.disable_warnings()
-
-          # 日志配置
+          # 配置日志
           logging.basicConfig(
               level=logging.INFO,
               format='%(asctime)s [%(levelname)s] %(message)s',
@@ -61,76 +60,76 @@ jobs:
                   msg['From'] = os.getenv('MATL_USERNAME')
                   msg['To'] = os.getenv('MATL_TO')
                   
-                  # 强制SMTP协议兼容
-                  with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as server:
-                      server.ehlo()
-                      server.starttls()
-                      server.ehlo()
-                      server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
-                      server.send_message(msg)
-                  logger.info("✅ 邮件发送成功")
+                  with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587, timeout=15) as s:
+                      s.ehlo()
+                      s.starttls()
+                      s.ehlo()
+                      s.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
+                      s.send_message(msg)
                   return True
               except Exception as e:
-                  logger.error(f"❌ 邮件发送失败: {type(e).__name__}: {str(e)}")
+                  logger.error(f"邮件发送失败: {type(e).__name__}: {str(e)}")
                   return False
 
-          def safe_json_parse(text):
+          def parse_response(text):
               try:
                   return json.loads(re.search(r'\{.*\}', text).group())
               except:
-                  return {"status": 0, "msg": "Invalid JSON"}
+                  return {'status': 0, 'msg': 'Invalid JSON: ' + text[:100]}
 
           try:
               logger.info("==== 任务开始 ====")
               
-              # Arctime登录
+              # 1. 登录
               session = requests.Session()
               login_res = session.post(
                   "https://m.arctime.cn/home/user/login_save.html",
                   data={
-                      "username": os.getenv('USERNAME'),
-                      "password": os.getenv('PASSWORD'),
-                      "login_type": "2"
+                      'username': os.getenv('USERNAME'),
+                      'password': os.getenv('PASSWORD'),
+                      'login_type': '2'
                   },
                   verify=False,
                   timeout=15
               )
-              login_data = safe_json_parse(login_res.text)
+              login_data = parse_response(login_res.text)
               
-              if login_data.get("status") == 1:
-                  logger.info("✅ 登录成功")
-                  
-                  # 签到检查
-                  ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False, timeout=15)
-                  if "今日已签到" in ucenter_res.text:
-                      logger.info("⏭️ 今日已签到")
-                      send_email("签到状态", "今日已签到，无需重复操作")
-                  else:
-                      sign_res = session.post(
-                          "https://m.arctime.cn/api/user/sign",
-                          verify=False,
-                          timeout=15
-                      )
-                      sign_data = safe_json_parse(sign_res.text)
-                      if sign_data.get("status") == 1:
-                          logger.info("🎉 签到成功")
-                          send_email("签到成功", f"积分变动: {sign_data.get('msg')}")
-                      else:
-                          error_msg = sign_data.get("msg", sign_res.text[:200])
-                          logger.error(f"❌ 签到失败: {error_msg}")
-                          send_email("签到失败", f"错误信息: {error_msg}")
+              if login_data.get('status') != 1:
+                  raise Exception(f"登录失败: {login_data.get('msg')}")
+              
+              logger.info("✅ 登录成功")
+              
+              # 2. 检查签到状态
+              ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False, timeout=15)
+              if "今日已签到" in ucenter_res.text:
+                  logger.info("⏭️ 今日已签到")
+                  send_email("签到状态", "今日已签到，无需重复操作")
+                  exit(0)
+              
+              # 3. 执行签到
+              sign_res = session.post(
+                  "https://m.arctime.cn/api/user/sign",
+                  verify=False,
+                  timeout=15
+              )
+              sign_data = parse_response(sign_res.text)
+              
+              if sign_data.get('status') == 1:
+                  logger.info(f"🎉 签到成功: {sign_data.get('msg')}")
+                  send_email("签到成功", f"结果: {sign_data.get('msg')}")
               else:
-                  error_msg = login_data.get("msg", "未知错误")
-                  logger.error(f"❌ 登录失败: {error_msg}")
-                  send_email("登录失败", f"错误信息: {error_msg}")
-
+                  raise Exception(f"签到失败: {sign_data.get('msg')}")
+                  
           except Exception as e:
-              logger.error(f"🚨 系统异常: {type(e).__name__}: {str(e)}")
-              send_email("系统崩溃", f"严重错误: {type(e).__name__}: {str(e)}")
+              logger.error(f"🚨 系统异常: {str(e)}")
+              send_email("执行失败", str(e))
+              exit(1)
           finally:
               logger.info("==== 任务结束 ====")
           EOF
 
+          # 执行脚本
+          python sign.py 2>&1 | tee $LOG_FILE
           echo "log_file=$LOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload logs
