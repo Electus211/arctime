@@ -1,43 +1,78 @@
 import requests
+import logging
 import os
-from bs4 import BeautifulSoup
+import smtplib
+from email.mime.text import MIMEText
+from datetime import datetime
 
-# 新版Arctime接口
-LOGIN_URL = "https://www.arctime.com/login"
-SIGN_URL = "https://www.arctime.com/api/user/sign"  # 示例接口，需实际抓包确认
+# 初始化日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
-def login(username, password):
+def send_email(subject, content):
+    """发送邮件通知"""
+    try:
+        msg = MIMEText(content, 'plain', 'utf-8')
+        msg['Subject'] = subject
+        msg['From'] = os.getenv('MATL_USERNAME')
+        msg['To'] = os.getenv('MATL_TO')
+        
+        with smtplib.SMTP(os.getenv('MATL_SMTP_SERVER'), 587) as server:
+            server.starttls()
+            server.login(os.getenv('MATL_USERNAME'), os.getenv('MATL_PASSWORD'))
+            server.send_message(msg)
+        logger.info("邮件发送成功")
+    except Exception as e:
+        logger.error(f"邮件发送失败: {str(e)}")
+
+def arctime_sign():
+    """Arctime签到主逻辑"""
     session = requests.Session()
-    # 1. 获取登录页（提取csrf_token等）
-    res = session.get(LOGIN_URL)
-    soup = BeautifulSoup(res.text, 'html.parser')
-    csrf_token = soup.find('input', {'name': 'csrf_token'})['value']
-
-    # 2. 提交登录表单
-    data = {
-        'username': username,
-        'password': password,
-        'csrf_token': csrf_token
-    }
-    res = session.post(LOGIN_URL, data=data)
-    if "登录成功" in res.text:
-        return session  # 返回已登录的session
-    else:
-        raise Exception("登录失败：请检查账号密码或网站改版")
-
-def auto_sign(session):
-    res = session.post(SIGN_URL)
-    if res.json().get("success"):
-        print("签到成功！")
-    else:
-        print("签到失败：", res.json().get("message"))
-
-if __name__ == '__main__':
-    username = os.getenv("USERNAME")  # 从GitHub Secrets读取
-    password = os.getenv("PASSWORD")
+    result = {"login": False, "sign": False, "msg": []}
     
-    if not username or not password:
-        raise ValueError("未设置USERNAME或PASSWORD环境变量")
+    # 登录
+    try:
+        login_url = "https://m.arctime.cn/home/user/login_save.html"
+        payload = {
+            "username": os.getenv('USERNAME'),
+            "password": os.getenv('PASSWORD'),
+            "login_type": "2"
+        }
+        res = session.post(login_url, data=payload, verify=False, timeout=10)
+        data = res.json()
+        
+        if data.get("status") == 1:
+            result["login"] = True
+            result["msg"].append("✅ 登录成功")
+            
+            # 检查签到状态
+            ucenter_res = session.get("https://m.arctime.cn/home/ucenter", verify=False)
+            if "今日已签到" in ucenter_res.text:
+                result["msg"].append("⏭️ 今日已签到")
+            else:
+                sign_res = session.post("https://m.arctime.cn/api/user/sign", verify=False)
+                if sign_res.json().get("status") == 1:
+                    result["sign"] = True
+                    result["msg"].append("🎉 签到成功")
+        else:
+            result["msg"].append(f"❌ 登录失败: {data.get('msg')}")
+            
+    except Exception as e:
+        result["msg"].append(f"🚨 系统异常: {str(e)}")
     
-    session = login(username, password)
-    auto_sign(session)
+    return result
+
+if __name__ == "__main__":
+    logger.info("===== 任务开始 =====")
+    result = arctime_sign()
+    
+    # 发送邮件通知
+    email_content = "\n".join(result["msg"])
+    email_subject = "Arctime签到通知 - " + ("成功" if result["sign"] else "失败")
+    send_email(email_subject, email_content)
+    
+    logger.info("===== 任务结束 =====")
